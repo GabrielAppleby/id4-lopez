@@ -1,32 +1,29 @@
+from typing import List
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
 from dash import Dash, dcc, html
 from dash.dependencies import Input, Output, ALL, State
 
-external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 
-app = Dash(__name__, external_stylesheets=external_stylesheets)
+app = Dash(__name__)
 
-# make a sample data frame with 6 columns
-np.random.seed(0)  # no-display
 df = pd.read_csv('transformed_data.csv', index_col=0)
-# df = df.set_index(df.index.astype('int64'))
 PARAM_START: int = 2
 PARAM_STOP: int = 101
 PARAM_STEP: int = 5
-PARAMS = list(range(PARAM_START, PARAM_STOP + PARAM_STEP, PARAM_STEP))
-COLUMNS = ['umap', 'verticalExcitationEnergy', 'homo', 'lumo', 'redoxPotentialS0',
-           'redoxPotentialS1', 'redoxPotentialT1', 'dipoleMomentS0', 'dipoleMomentS1',
-           'dipoleMomentT1', 'zero0s1', 'zero0t1', 'ionizationPotential', 'S', 'C', 'Cl', 'F', 'B',
-           'O', 'N']
+PARAMS: List[int] = list(range(PARAM_START, PARAM_STOP + PARAM_STEP, PARAM_STEP))
+COLUMNS: List[str] = ['umap', 'verticalExcitationEnergy', 'homo', 'lumo', 'redoxPotentialS0',
+                      'redoxPotentialS1', 'redoxPotentialT1', 'dipoleMomentS0', 'dipoleMomentS1',
+                      'dipoleMomentT1', 'zero0s1', 'zero0t1', 'ionizationPotential', 'S', 'C', 'Cl', 'F', 'B',
+                      'O', 'N']
 
-histograms = [dcc.Graph(id={'type': 'histogram', 'index': col}, figure=px.histogram(df, x=col),
-                        config={'displayModeBar': False}) for col in
-              COLUMNS[1:]]
+histograms: List[dcc.Graph] = [dcc.Graph(id={'type': 'histogram', 'index': col}, figure=px.histogram(df, x=col),
+                                         config={'displayModeBar': False}) for col in COLUMNS[1:]]
 
-app.layout = html.Div(className='container', children=[
-    html.Div(id='controls', className='row', children=[
+app.layout = html.Div(id='app-entry', className='flex column', children=[
+    html.Div(id='controls', className='flex', children=[
         html.Div(id='scatter_color_selector_div', children=[
             html.H4(children='Color:'),
             dcc.Dropdown(id='scatter_color_selector',
@@ -34,7 +31,7 @@ app.layout = html.Div(className='container', children=[
                          multi=False,
                          clearable=False,
                          value=COLUMNS[-1])],
-                 className='two columns'),
+                 className='dropdown'),
         html.Div(id='scatter_x_axis_selector_div', children=[
             html.H4(children='X - Axis:'),
             dcc.Dropdown(id='x_axis_selector',
@@ -42,7 +39,7 @@ app.layout = html.Div(className='container', children=[
                          multi=False,
                          clearable=False,
                          value=COLUMNS[0])],
-                 className='two columns'),
+                 className='dropdown'),
         html.Div(id='scatter_y_axis_selector_div', children=[
             html.H4(children='Y - Axis:'),
             dcc.Dropdown(id='y_axis_selector',
@@ -50,29 +47,31 @@ app.layout = html.Div(className='container', children=[
                          multi=False,
                          clearable=False,
                          value=COLUMNS[0])],
-                 className='two columns'),
+                 className='dropdown'),
 
         html.Div(id='num_neighbors_slider_div', children=[
             html.H4(children='Number of neighbors:'),
-            dcc.Slider(id='num_neighbors_slider', min=PARAMS[0], max=PARAMS[-1], step=PARAM_STEP,
+            dcc.Slider(id='num_neighbors_slider', className='dcc-slider-cludge', min=PARAMS[0], max=PARAMS[-1], step=PARAM_STEP,
                        value=PARAMS[4])],
-                 className='six columns'),
+                 className='slider'),
     ]),
-    html.Div(id='projection', className='row', children=[
-        dcc.Graph(
-            id='projection_scatter',
-            config={'modeBarButtonsToRemove': ['select', 'lasso']}
-        ),
-        dcc.Tooltip(id="projection_tooltip")
+    html.Div(id='plots', className='flex', children=[
+        html.Div(id='projection', children=[
+            dcc.Graph(
+                id='projection_scatter',
+                config={'modeBarButtonsToRemove': ['select', 'lasso']}
+            ),
+            dcc.Tooltip(id="projection_tooltip")
+        ]),
+        html.Div(id='histograms', children=histograms)
     ]),
-    html.Div(id='histograms', className='row', children=histograms)
 ])
 
 
-def get_figure(df, x_col, y_col, color, selectedpoints):
+def get_figure(df: pd.DataFrame, x_col: str, y_col: str, color: str, selected_points: List[int]):
     fig = px.scatter(df, x=x_col, y=y_col, color=color,
                      hover_data={name: False for name in df.columns})
-    fig.update_traces(selectedpoints=selectedpoints,
+    fig.update_traces(selectedpoints=selected_points,
                       customdata=df.index,
                       mode='markers',
                       unselected={'marker': {'color': 'grey'}})
@@ -80,8 +79,31 @@ def get_figure(df, x_col, y_col, color, selectedpoints):
     return fig
 
 
-# this callback defines 3 figures
-# as a function of the intersection of their 3 selections
+def get_hist(inner_df, x_col, selectedpoints, selectedpoints_local):
+    inner_df['selected'] = inner_df.index.isin(selectedpoints)
+    fig = px.histogram(inner_df, x=x_col, color='selected', color_discrete_map={True: '#636efa', False: '#808080'})
+    if selectedpoints_local and "range" in selectedpoints_local:
+        ranges = selectedpoints_local["range"]
+        selection_bounds = {
+            "x0": ranges["x"][0],
+            "x1": ranges["x"][1],
+            "y0": ranges["y"][0],
+            "y1": ranges["y"][1],
+        }
+        xref = None
+        yref = None
+        fig.add_shape(dict({'type': 'rect',
+                            'line': {'width': 1, 'dash': 'dot', 'color': 'darkgrey'}},
+                           xref=xref,
+                           yref=yref,
+                           **selection_bounds))
+
+    fig.update_traces(customdata=inner_df.index)
+    fig.update_layout(dragmode='select', hovermode=False)
+
+    return fig
+
+
 @app.callback(
     Output(component_id='projection_scatter', component_property='figure'),
     Input(component_id='scatter_color_selector', component_property='value'),
@@ -89,16 +111,15 @@ def get_figure(df, x_col, y_col, color, selectedpoints):
     Input(component_id='y_axis_selector', component_property='value'),
     Input(component_id='num_neighbors_slider', component_property='value'),
     Input({'type': 'histogram', 'index': ALL}, 'selectedData'))
-# def callback(color, neighbor, selection):
 def callback(color, x_axis, y_axis, neighbor, selection):
     neighbor = str(neighbor)
     selected_points = df.index
     for sd in selection:
         current_hist_points = []
         if sd is not None and sd['points'] is not None:
-            for blah in sd['points']:
-                if blah['pointNumbers'] is not None and len(blah['pointNumbers']) > 0:
-                    current_hist_points.extend(blah['pointNumbers'])
+            for point_collection in sd['points']:
+                if point_collection['customdata'] is not None and len(point_collection['customdata']) > 0:
+                    current_hist_points.extend(point_collection['customdata'])
         if len(current_hist_points) > 0:
             selected_points = np.intersect1d(selected_points, np.array(current_hist_points))
     if x_axis == 'umap':
@@ -106,34 +127,6 @@ def callback(color, x_axis, y_axis, neighbor, selection):
     if y_axis == 'umap':
         y_axis = 'y_' + neighbor
     return get_figure(df, x_axis, y_axis, color, selected_points)
-
-
-def get_hist(inner_df, x_col, selectedpoints, selectedpoints_local):
-    fig = px.histogram(inner_df, x=x_col)
-    if selectedpoints_local and selectedpoints_local['range']:
-        ranges = selectedpoints_local['range']
-        selection_bounds = {'x0': ranges['x'][0], 'x1': ranges['x'][1],
-                            'y0': ranges['y'][0], 'y1': ranges['y'][1]}
-        xref = None
-        yref = None
-    else:
-        selection_bounds = {'x0': 0, 'x1': 1,
-                            'y0': 0, 'y1': 1}
-        xref = "paper"
-        yref = "paper"
-
-    fig.update_traces(selectedpoints=selectedpoints,
-                      customdata=inner_df.index,
-                      unselected={'marker': {'color': 'grey'}})
-
-    fig.update_layout(dragmode='select', hovermode=False)
-
-    fig.add_shape(dict({'type': 'rect',
-                        'line': {'width': 1, 'dash': 'dot', 'color': 'darkgrey'}},
-                       xref=xref,
-                       yref=yref,
-                       **selection_bounds))
-    return fig
 
 
 @app.callback(
@@ -145,9 +138,9 @@ def callback(selection, columns):
     for sd in selection:
         current_hist_points = []
         if sd is not None and sd['points'] is not None:
-            for blah in sd['points']:
-                if blah['pointNumbers'] is not None and len(blah['pointNumbers']) > 0:
-                    current_hist_points.extend(blah['pointNumbers'])
+            for point_collection in sd['points']:
+                if point_collection['customdata'] is not None and len(point_collection['customdata']) > 0:
+                    current_hist_points.extend(point_collection['customdata'])
         if len(current_hist_points) > 0:
             selected_points = np.intersect1d(selected_points, np.array(current_hist_points))
     hists = []
